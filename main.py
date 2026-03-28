@@ -15,6 +15,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 def main():
+    os.environ["OPENMP_NUM_THREADS"] = "5"
     # -------------------
     # CONFIG
     # -------------------
