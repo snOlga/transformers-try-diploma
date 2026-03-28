@@ -1,0 +1,2 @@
+python3 -m venv ~/llm-env
+source ~/llm-env/bin/activate
