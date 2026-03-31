@@ -26,8 +26,8 @@ def main():
     # -------------------
     # GPU SPEEDUPS
     # -------------------
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.benchmark = True
+    # torch.backends.cuda.matmul.allow_tf32 = True
+    # torch.backends.cudnn.benchmark = True
 
     # -------------------
     # LOAD MODEL (4-bit GPU)
