@@ -1,42 +1,35 @@
+import os
+import torch
+from accelerate import Accelerator
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
-    TrainingArguments,
-    Trainer,
-    DataCollatorForLanguageModeling
+    DataCollatorForLanguageModeling,
+    get_scheduler
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from datasets import load_dataset
-import torch
-import os
-import warnings
-
-warnings.filterwarnings("ignore")
+from torch.utils.data import DataLoader
+from torch.optim import AdamW
 
 def main():
     os.environ["OPENMP_NUM_THREADS"] = "5"
-    # -------------------
-    # CONFIG
-    # -------------------
+    num_cpu = 5
+
+    accelerator = Accelerator()
+    device = accelerator.device
+
     model_name = "Qwen/Qwen2.5-7B-Instruct"
-    
-    num_cpu = 5 
 
     # -------------------
-    # GPU SPEEDUPS
-    # -------------------
-    # torch.backends.cuda.matmul.allow_tf32 = True
-    # torch.backends.cudnn.benchmark = True
-
-    # -------------------
-    # LOAD MODEL (4-bit GPU)
+    # MODEL
     # -------------------
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_compute_dtype=torch.float16,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True # Extra memory savings
+        bnb_4bit_use_double_quant=True
     )
 
     print("Loading tokenizer and model...")
@@ -47,16 +40,13 @@ def main():
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float16, 
-        quantization_config=bnb_config
-    ).cuda()
+        quantization_config=bnb_config,
+        torch_dtype=torch.float16,
+        device_map={"": device}  # accelerate handles device
+    )
 
-    # Prepares the 4-bit model for stable training
     model = prepare_model_for_kbit_training(model)
 
-    # -------------------
-    # LORA
-    # -------------------
     lora_config = LoraConfig(
         r=8,
         lora_alpha=16,
@@ -67,18 +57,12 @@ def main():
     )
 
     model = get_peft_model(model, lora_config)
-
-    # Memory + speed boost
     model.gradient_checkpointing_enable()
 
     # -------------------
     # DATASET
     # -------------------
-    data_path = "real_data.json"
-    print(f"Loading dataset from {data_path}...")
-    dataset = load_dataset("json", data_files=data_path)
-
-    # Get the names of the original columns to remove them later
+    dataset = load_dataset("json", data_files="real_data.json")
     column_names = dataset["train"].column_names
 
     def format_example(example):
@@ -89,98 +73,86 @@ def main():
     dataset = dataset.map(format_example, num_proc=num_cpu)
 
     def tokenize(example):
-        # only tokenize the "text" field
         return tokenizer(
             example["text"],
             truncation=True,
             max_length=512,
-            padding=False 
+            padding=False
         )
 
-    print("Tokenizing dataset...")
     tokenized_dataset = dataset.map(
-        tokenize, 
-        batched=True, 
+        tokenize,
+        batched=True,
         num_proc=num_cpu,
-        remove_columns=column_names + ["text"] 
+        remove_columns=column_names + ["text"]
     )
 
-    # -------------------
-    # COLLATOR
-    # -------------------
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False
     )
 
-    # -------------------
-    # TRAINING 
-    # -------------------
-    training_args = TrainingArguments(
-        output_dir="./qwen-lora",
-        
-        # bigger batch = better GPU usage
-        per_device_train_batch_size=4,
-        gradient_accumulation_steps=2,
-
-        num_train_epochs=3,
-        learning_rate=2e-4,
-
-        # logging
-        logging_steps=10,
-        logging_strategy="steps",
-        log_level = "info",
-
-        # no checkpoints (faster)
-        save_strategy="no",
-
-        # mixed precision
-        fp16=True,
-
-        # CPU workers
-        dataloader_num_workers=num_cpu,
-        dataloader_pin_memory=True,
-
-        report_to="none",
-        optim="paged_adamw_8bit",
-
-        torch_compile = True,
-        # use_cpu = False,
-        cp_config = TorchContextParallelConfig(
-            cp_comm_strategy="alltoall", 
-        )
-        
-    )
-
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_dataset["train"], 
-        data_collator=data_collator
+    train_dataloader = DataLoader(
+        tokenized_dataset["train"],
+        shuffle=True,
+        collate_fn=data_collator,
+        batch_size=4,
+        num_workers=num_cpu,
+        pin_memory=True
     )
 
     # -------------------
-    # COMPILE 
+    # OPTIMIZER
     # -------------------
-    # DISABLED FOR WINDOWS
-    # model = torch.compile(model) 
+    optimizer = AdamW(model.parameters(), lr=2e-4)
+
+    num_epochs = 3
+    num_training_steps = num_epochs * len(train_dataloader)
+
+    lr_scheduler = get_scheduler(
+        name="linear",
+        optimizer=optimizer,
+        num_warmup_steps=100,
+        num_training_steps=num_training_steps,
+    )
 
     # -------------------
-    # TRAIN
+    # ACCELERATE PREP
+    # -------------------
+    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, lr_scheduler
+    )
+
+    # -------------------
+    # TRAIN LOOP
     # -------------------
     print("Starting training...")
-    print(next(model.parameters()).device)
-    trainer.train()
+    model.train()
+
+    for epoch in range(num_epochs):
+        for step, batch in enumerate(train_dataloader):
+            outputs = model(**batch)
+            loss = outputs.loss
+
+            accelerator.backward(loss)
+
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+
+            if step % 10 == 0:
+                accelerator.print(f"Epoch {epoch} | Step {step} | Loss {loss.item():.4f}")
 
     # -------------------
     # SAVE
     # -------------------
-    print("Saving model...")
-    model.save_pretrained("./qwen-lora")
+    accelerator.wait_for_everyone()
+    unwrapped_model = accelerator.unwrap_model(model)
+
+    unwrapped_model.save_pretrained("./qwen-lora", save_function=accelerator.save)
     tokenizer.save_pretrained("./qwen-lora")
 
-    print("Finished")
+    print("Finished training")
 
-# Mandatory for Windows multiprocessing
 if __name__ == "__main__":
     main()
