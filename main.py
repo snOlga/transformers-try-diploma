@@ -47,10 +47,9 @@ def main():
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        device_map="auto", 
         torch_dtype=torch.float16, 
         quantization_config=bnb_config
-    )
+    ).cuda()
 
     # Prepares the 4-bit model for stable training
     model = prepare_model_for_kbit_training(model)
@@ -130,6 +129,7 @@ def main():
         # logging
         logging_steps=10,
         logging_strategy="steps",
+        log_level = "info",
 
         # no checkpoints (faster)
         save_strategy="no",
@@ -142,7 +142,14 @@ def main():
         dataloader_pin_memory=True,
 
         report_to="none",
-        optim="paged_adamw_8bit" 
+        optim="paged_adamw_8bit",
+
+        torch_compile = True,
+        # use_cpu = False,
+        cp_config = TorchContextParallelConfig(
+            cp_comm_strategy="alltoall", 
+        )
+        
     )
 
     trainer = Trainer(
@@ -162,6 +169,7 @@ def main():
     # TRAIN
     # -------------------
     print("Starting training...")
+    print(next(model.parameters()).device)
     trainer.train()
 
     # -------------------
