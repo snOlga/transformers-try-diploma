@@ -139,7 +139,7 @@ def main():
             optimizer.zero_grad()
 
             if step % 10 == 0:
-                accelerator.print(f"Time {datetime.now()} | Epoch {epoch} | Step {step} | Loss {loss.item():.4f}")
+                print(f"Time {datetime.now()} | Epoch {epoch} | Step {step} | Loss {loss.item():.4f}")
 
     # -------------------
     # SAVE

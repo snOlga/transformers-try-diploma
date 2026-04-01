@@ -1,0 +1,1 @@
+accelerate launch --cpu --num_processes 4 --num_cpu_threads_per_process 10 main.py
