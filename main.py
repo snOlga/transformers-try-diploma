@@ -12,6 +12,7 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
+from datetime import datetime
 
 def main():
     os.environ["OPENMP_NUM_THREADS"] = "5"
@@ -138,7 +139,7 @@ def main():
             optimizer.zero_grad()
 
             if step % 10 == 0:
-                accelerator.print(f"Epoch {epoch} | Step {step} | Loss {loss.item():.4f}")
+                accelerator.print(f"Time {datetime.now()} | Epoch {epoch} | Step {step} | Loss {loss.item():.4f}")
 
     # -------------------
     # SAVE
