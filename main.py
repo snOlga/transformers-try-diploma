@@ -23,29 +23,24 @@ def main():
     model_name = "Qwen/Qwen2.5-7B-Instruct"
 
     # -------------------
-    # MODEL
+    # MODEL (Modified for CPU)
     # -------------------
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True
-    )
-
     print("Loading tokenizer and model...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # Load in standard float32 (or bfloat16 if your CPU supports it)
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        quantization_config=bnb_config,
-        torch_dtype=torch.float16,
-        device_map={"": device}  # accelerate handles device
+        torch_dtype=torch.float32, 
+        # Removed bitsandbytes config
+        # Removed device_map (accelerate handles this automatically during prepare)
     )
 
-    model = prepare_model_for_kbit_training(model)
+    # We do not use prepare_model_for_kbit_training on CPU
+    # model = prepare_model_for_kbit_training(model) 
 
     lora_config = LoraConfig(
         r=8,
@@ -57,6 +52,8 @@ def main():
     )
 
     model = get_peft_model(model, lora_config)
+    
+    # Gradient checkpointing can save RAM, but is slower. 
     model.gradient_checkpointing_enable()
 
     # -------------------
