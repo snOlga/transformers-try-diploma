@@ -15,51 +15,57 @@ from torch.optim import AdamW
 from datetime import datetime
 
 def main():
-    os.environ["OPENMP_NUM_THREADS"] = "5"
-    num_cpu = 5
-
-    accelerator = Accelerator()
+    # Windows-specific: Ensure the accelerator knows we are using CUDA
+    accelerator = Accelerator(mixed_precision="fp16") # Uses half-precision for speed/memory
     device = accelerator.device
 
     model_name = "Qwen/Qwen2.5-7B-Instruct"
 
     # -------------------
-    # MODEL (Modified for CPU)
+    # MODEL (Modified for GPU with 4-bit Quantization)
     # -------------------
-    print("Loading tokenizer and model...")
+    print(f"Loading tokenizer and model on {device}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Load in standard float32 (or bfloat16 if your CPU supports it)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.float32, 
-        # Removed bitsandbytes config
-        # Removed device_map (accelerate handles this automatically during prepare)
+    # 4-bit quantization config to save VRAM (Required for 7B models on consumer GPUs)
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16
     )
 
-    # We do not use prepare_model_for_kbit_training on CPU
-    # model = prepare_model_for_kbit_training(model) 
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map={"": device}, # Directs model to the specific GPU found by accelerator
+        torch_dtype=torch.float16,
+    )
+
+    # Necessary for quantized training
+    model = prepare_model_for_kbit_training(model)
 
     lora_config = LoraConfig(
-        r=8,
-        lora_alpha=16,
-        target_modules=["q_proj", "v_proj"],
+        r=16, # Increased from 8 for better learning capacity
+        lora_alpha=32,
+        # Target most linear layers for better fine-tuning quality
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM"
     )
 
     model = get_peft_model(model, lora_config)
-    
-    # Gradient checkpointing can save RAM, but is slower. 
     model.gradient_checkpointing_enable()
 
     # -------------------
     # DATASET
     # -------------------
+    # Note: On Windows, num_proc can sometimes cause issues; 
+    # if you get a "PicklingError", set num_proc=0
     dataset = load_dataset("json", data_files="real_data.json")
     column_names = dataset["train"].column_names
 
@@ -68,7 +74,7 @@ def main():
             "text": f"### Instruction:\n{example['instruction']}\n\n### Input:\n{example['input']}\n\n### Response:\n{example['output']}"
         }
 
-    dataset = dataset.map(format_example, num_proc=num_cpu)
+    dataset = dataset.map(format_example)
 
     def tokenize(example):
         return tokenizer(
@@ -81,54 +87,55 @@ def main():
     tokenized_dataset = dataset.map(
         tokenize,
         batched=True,
-        num_proc=num_cpu,
         remove_columns=column_names + ["text"]
     )
 
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=False
-    )
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     train_dataloader = DataLoader(
         tokenized_dataset["train"],
         shuffle=True,
         collate_fn=data_collator,
-        batch_size=4,
-        num_workers=num_cpu,
-        pin_memory=True
+        batch_size=2, # Keep small for 7B models unless you have >24GB VRAM
+        pin_memory=True # Faster data transfer to GPU
     )
 
     # -------------------
     # OPTIMIZER
     # -------------------
-    optimizer = AdamW(model.parameters(), lr=2e-4)
+    # 8-bit Adam optimizer saves more VRAM
+    import bitsandbytes as bnb
+    optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=2e-4)
 
     num_epochs = 3
     num_training_steps = num_epochs * len(train_dataloader)
 
     lr_scheduler = get_scheduler(
-        name="linear",
+        name="cosine", # Cosine usually performs better for LLMs
         optimizer=optimizer,
-        num_warmup_steps=100,
+        num_warmup_steps=int(0.1 * num_training_steps),
         num_training_steps=num_training_steps,
     )
 
     # -------------------
     # ACCELERATE PREP
     # -------------------
-    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, lr_scheduler
+    # Note: We don't prepare the model here because it's already on device via device_map
+    optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        optimizer, train_dataloader, lr_scheduler
     )
 
     # -------------------
     # TRAIN LOOP
     # -------------------
-    print("Starting training...")
+    print("Starting GPU training...")
     model.train()
 
     for epoch in range(num_epochs):
         for step, batch in enumerate(train_dataloader):
+            # Move batch to device
+            batch = {k: v.to(device) for k, v in batch.items()}
+            
             outputs = model(**batch)
             loss = outputs.loss
 
@@ -139,18 +146,17 @@ def main():
             optimizer.zero_grad()
 
             if step % 10 == 0:
-                print(f"Time {datetime.now()} | Epoch {epoch} | Step {step} | Loss {loss.item():.4f}")
+                print(f"{datetime.now().strftime('%H:%M:%S')} | Epoch {epoch} | Step {step} | Loss {loss.item():.4f}")
 
     # -------------------
     # SAVE
     # -------------------
     accelerator.wait_for_everyone()
-    unwrapped_model = accelerator.unwrap_model(model)
+    # Save the LoRA adapters
+    model.save_pretrained("./qwen-lora-gpu")
+    tokenizer.save_pretrained("./qwen-lora-gpu")
 
-    unwrapped_model.save_pretrained("./qwen-lora", save_function=accelerator.save)
-    tokenizer.save_pretrained("./qwen-lora")
-
-    print("Finished training")
+    print("Finished training. Model saved to ./qwen-lora-gpu")
 
 if __name__ == "__main__":
     main()
