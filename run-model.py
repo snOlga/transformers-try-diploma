@@ -2,36 +2,25 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
-model_name = "Qwen/Qwen2.5-7B-Instruct"
-lora_path = "./qwen-lora-gpu"
+base_model_name = "Qwen/Qwen2.5-7B-Instruct"
+adapter_path = "./qwen-lora-gpu"
 
-device = "cuda"
-
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-
+# 1. Load Tokenizer and Base Model (in 4-bit to save VRAM)
+tokenizer = AutoTokenizer.from_pretrained(base_model_name)
 model = AutoModelForCausalLM.from_pretrained(
-    model_name,
+    base_model_name,
     torch_dtype=torch.float16,
     device_map="auto"
 )
 
-model = PeftModel.from_pretrained(model, lora_path)
-
+# 2. Load the LoRA adapters onto the base model
+model = PeftModel.from_pretrained(model, adapter_path)
 model.eval()
 
-while True:
-    print(">>")
-    prompt = input(" ")
+# 3. Test a prompt
+prompt = "### Instruction:\nНапиши связь к слову.\n\n### Input:\nКот.\n\n### Response:\n"
+inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
-
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=200,
-            temperature=0.7,
-            top_p=0.9,
-            do_sample=True
-        )
-
-    print(tokenizer.decode(output[0], skip_special_tokens=True))
+with torch.no_grad():
+    outputs = model.generate(**inputs, max_new_tokens=100)
+    print(tokenizer.decode(outputs[0], skip_special_tokens=True))
