@@ -146,7 +146,7 @@ def main():
             optimizer.zero_grad()
 
             if step % 10 == 0:
-                print(f"{datetime.now().strftime('%H:%M:%S')} | Epoch {epoch} | Step {step} | Loss {loss.item():.4f}")
+                print(f"{datetime.now().strftime('%H:%M:%S')} | Epoch {epoch} | Step {step}/{num_training_steps} | Loss {loss.item():.4f}")
 
     # -------------------
     # SAVE
