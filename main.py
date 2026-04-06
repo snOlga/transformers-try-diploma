@@ -80,7 +80,7 @@ def main():
         return tokenizer(
             example["text"],
             truncation=True,
-            max_length=512,
+            max_length=1024,
             padding=False
         )
 
@@ -96,7 +96,7 @@ def main():
         tokenized_dataset["train"],
         shuffle=True,
         collate_fn=data_collator,
-        batch_size=2, # Keep small for 7B models unless you have >24GB VRAM
+        batch_size=8, # Keep small for 7B models unless you have >24GB VRAM
         pin_memory=True # Faster data transfer to GPU
     )
 
