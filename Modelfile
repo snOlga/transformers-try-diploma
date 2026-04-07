@@ -1,0 +1,74 @@
+# Base model
+# FROM llama4:16x17b
+FROM mistral:7b-instruct-v0.3-fp16
+
+# System behavior
+SYSTEM """
+Для поданного слова ты должен подобрать соответсвующую связь с другими словами. Само понятие тоже должно входить в ответ. С него должен начинаться ответ.
+Возможные связи: instance-of, has-a, is-a.
+Для проверки наличия слова в памяти, с которым можно связать поданное, используй инструмент get. В аргумент принимает слово, которое хочешь проверить. Возвращает строку, содержащую смысл слова.
+Если искомого слова для связи нет, то ответь только этим словом. Если такое слово есть, напиши конструкцию: [поданое слово] [тип связи] [слово из памяти].
+Не используй форматирование.
+Не объясняй слова.
+Ответ не должен содержать переноса строки.
+Верни ровно одну строку в формате: <concept_1> <relation> <concept_2>
+Используй только: is-a, instance-of, has-a
+Без объяснений.
+Для сложносоставных понятий используй нижнее подчеркивание вместо пробела (например, система_знаний), но для остального - пробел.
+Не используй символы < или \ или , или . в концептах
+"""
+
+# Sampling parameters (affects creativity and accuracy)
+PARAMETER temperature 0.1
+PARAMETER top_k 10
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.1
+PARAMETER num_ctx 4096
+
+# Optional stop tokens
+PARAMETER stop "user"
+PARAMETER stop "assistant"
+PARAMETER num_predict 20
+
+MESSAGE user "администрация_предприятия_1"
+MESSAGE assistant "администрация_предприятия_1 is-a административные_кадры_1"
+MESSAGE user "администрация_завода_1"
+MESSAGE assistant "администрация_завода_1 instance-of администрация_предприятия_1"
+MESSAGE user "управление_предприятием_1"
+MESSAGE assistant "управление_предприятием_1 has-a администрация_предприятия_1"
+MESSAGE user "администрация_предприятия_1"
+MESSAGE assistant "администрация_предприятия_1 has-a глава_предприятия_1"
+MESSAGE user "администрация_предприятия_1"
+MESSAGE assistant "администрация_предприятия_1 is-a администрация_организации_1"
+MESSAGE user "администрация_президента_1"
+MESSAGE assistant "администрация_президента_1 is-a органы_при_президенте_1"
+MESSAGE user "администрация_президента_россии_1"
+MESSAGE assistant "администрация_президента_россии_1 instance-of администрация_президента_1"
+MESSAGE user "администрация_президента_россии_1"
+MESSAGE assistant "администрация_президента_россии_1 is-a администрация_президента_1"
+MESSAGE user "администрация_района_1"
+MESSAGE assistant "администрация_района_1 is-a администрация_муниципального_образования_1"
+MESSAGE user "районное_самоуправление_1"
+MESSAGE assistant "районное_самоуправление_1 has-a администрация_района_1"
+MESSAGE user "администрация_района_1"
+MESSAGE assistant "администрация_района_1 has-a районный_отдел_народного_образования_1"
+MESSAGE user "районная_управа_1"
+MESSAGE assistant "районная_управа_1 instance-of администрация_района_1"
+MESSAGE user "адмирал_1"
+MESSAGE assistant "адмирал_1 is-a высший_офицерский_состав_1"
+MESSAGE user "адмирал_1"
+MESSAGE assistant "адмирал_1 is-a высшее_воинское_звание_1"
+MESSAGE user "адмирал_1"
+MESSAGE assistant "адмирал_1 is-a офицер_военно-морского_флота_1"
+MESSAGE user "адреналин_1"
+MESSAGE assistant "адреналин_1 is-a гормон_1"
+MESSAGE user "адреналин_1"
+MESSAGE assistant "адреналин_1 is-a стимулирующее_вещество_1"
+MESSAGE user "почтовый_адрес_1"
+MESSAGE assistant "почтовый_адрес_1 instance-of адрес_1"
+MESSAGE user "послать_3"
+MESSAGE assistant "послать_3 has-a адрес_1"
+MESSAGE user "адрес_1"
+MESSAGE assistant "адрес_1 is-a запись_1"
+MESSAGE user "интернет-адрес_1"
+MESSAGE assistant "интернет-адрес_1 instance-of адрес_1"
