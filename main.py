@@ -13,8 +13,6 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from datetime import datetime
-from datasets import load_dataset
-from datasets import concatenate_datasets, load_dataset
 
 def main():
     # Windows-specific: Ensure the accelerator knows we are using CUDA
@@ -68,59 +66,15 @@ def main():
     # -------------------
     # Note: On Windows, num_proc can sometimes cause issues; 
     # if you get a "PicklingError", set num_proc=0
-    conceptnet = load_dataset("conceptnet5/conceptnet5", split="train")
-
-    REL_MAP = {
-        "/r/IsA": "is-a",
-        "/r/InstanceOf": "instance-of",
-        "/r/PartOf": "part-of",
-        "/r/UsedFor": "used-for",
-        "/r/CapableOf": "capable-of",
-        "/r/RelatedTo": "related-to"
-    }
-
-    def clean_term(term):
-        # "/c/en/dog" → "dog"
-        return term.split("/")[-1].replace("_", " ")
-
-    def convert_conceptnet(example):
-        rel = example["rel"]
-        if rel not in REL_MAP:
-            return None
-        
-        head = clean_term(example["start"])
-        tail = clean_term(example["end"])
-        
-        return {
-            "instruction": "Write relation for the word",
-            "input": head,
-            "output": f"{head} {REL_MAP[rel]} {tail}"
-        }
-
-    conceptnet = conceptnet.map(convert_conceptnet)
-    conceptnet = conceptnet.filter(lambda x: x is not None)
-
     dataset = load_dataset("json", data_files="real_data.json")
     column_names = dataset["train"].column_names
-
-    def is_valid_lang(example):
-        return example["start"].startswith(("/c/en/", "/c/ru/"))
-
-    conceptnet = conceptnet.filter(is_valid_lang)
 
     def format_example(example):
         return {
             "text": f"### Instruction:\n{example['instruction']}\n\n### Input:\n{example['input']}\n\n### Response:\n{example['output']}"
         }
 
-    conceptnet = conceptnet.map(format_example)
-
-    your_data = load_dataset("json", data_files="real_data.json")["train"]
-    your_data = your_data.map(format_example)
-
-    combined = concatenate_datasets([conceptnet, your_data])
-
-    dataset = combined
+    dataset = dataset.map(format_example)
 
     def tokenize(example):
         return tokenizer(
