@@ -16,7 +16,7 @@ from datetime import datetime
 
 def main():
     # Windows-specific: Ensure the accelerator knows we are using CUDA
-    accelerator = Accelerator(mixed_precision="fp16") # Uses half-precision for speed/memory
+    accelerator = Accelerator(mixed_precision="bf16") # Uses half-precision for speed/memory
     device = accelerator.device
 
     model_name = "Qwen/Qwen2.5-7B-Instruct"
@@ -35,14 +35,14 @@ def main():
         load_in_4bit=True,
         bnb_4bit_use_double_quant=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16
+        bnb_4bit_compute_dtype=torch.bfloat16
     )
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=bnb_config,
         device_map={"": device}, # Directs model to the specific GPU found by accelerator
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
     )
 
     # Necessary for quantized training
@@ -53,7 +53,7 @@ def main():
         lora_alpha=32,
         # Target most linear layers for better fine-tuning quality
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_dropout=0.05,
+        lora_dropout=0.005,
         bias="none",
         task_type="CAUSAL_LM"
     )
@@ -80,7 +80,7 @@ def main():
         return tokenizer(
             example["text"],
             truncation=True,
-            max_length=1024,
+            max_length=2048,
             padding=False
         )
 
