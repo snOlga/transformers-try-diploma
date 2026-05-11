@@ -35,14 +35,12 @@ tokenizer = AutoTokenizer.from_pretrained(base_model_name)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-# Loading in bfloat16. Ensure you have ~15GB VRAM free.
 model = AutoModelForCausalLM.from_pretrained(
     base_model_name,
     device_map=device, 
     torch_dtype=torch.bfloat16,
 )
 
-# Load the LoRA adapters
 print("Applying LoRA adapters...")
 model = PeftModel.from_pretrained(model, adapter_path)
 model.eval()
@@ -62,15 +60,13 @@ async def chat_completions(request: ChatCompletionRequest):
         prompt = f"### Instruction:\n{user_message}\n\n### Input:\n\n\n### Response:\n"
         
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
-        
-        # Generate the response
         with torch.no_grad():
             outputs = model.generate(
                 **inputs, 
                 max_new_tokens=request.max_tokens,
                 temperature=request.temperature,
                 pad_token_id=tokenizer.pad_token_id,
-                do_sample=True if request.temperature > 0 else False
+                do_sample=request.temperature > 0
             )
         
         # Decode the output

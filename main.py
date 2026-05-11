@@ -13,8 +13,10 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from datetime import datetime
+from huggingface_hub import login
 
 def main():
+    login("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")
     # Windows-specific: Ensure the accelerator knows we are using CUDA
     accelerator = Accelerator(mixed_precision="bf16") # Uses half-precision for speed/memory
     device = accelerator.device
@@ -53,7 +55,7 @@ def main():
         lora_alpha=32,
         # Target most linear layers for better fine-tuning quality
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_dropout=0.005,
+        lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM"
     )
@@ -96,7 +98,7 @@ def main():
         tokenized_dataset["train"],
         shuffle=True,
         collate_fn=data_collator,
-        batch_size=8, # Keep small for 7B models unless you have >24GB VRAM
+        batch_size=10, # Keep small for 7B models unless you have >24GB VRAM
         pin_memory=True # Faster data transfer to GPU
     )
 
@@ -105,15 +107,15 @@ def main():
     # -------------------
     # 8-bit Adam optimizer saves more VRAM
     import bitsandbytes as bnb
-    optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=2e-4)
+    optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=1e-4)
 
-    num_epochs = 3
+    num_epochs = 1
     num_training_steps = num_epochs * len(train_dataloader)
 
     lr_scheduler = get_scheduler(
         name="cosine", # Cosine usually performs better for LLMs
         optimizer=optimizer,
-        num_warmup_steps=int(0.1 * num_training_steps),
+        num_warmup_steps=int(0.2 * num_training_steps),
         num_training_steps=num_training_steps,
     )
 
